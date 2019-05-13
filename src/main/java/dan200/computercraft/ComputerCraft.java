@@ -19,6 +19,7 @@ import dan200.computercraft.api.pocket.IPocketUpgrade;
 import dan200.computercraft.api.redstone.IBundledRedstoneProvider;
 import dan200.computercraft.api.turtle.ITurtleUpgrade;
 import dan200.computercraft.core.apis.AddressPredicate;
+import dan200.computercraft.core.computer.Computer.ForcedChunkLoadingCallback;
 import dan200.computercraft.core.filesystem.ComboMount;
 import dan200.computercraft.core.filesystem.FileMount;
 import dan200.computercraft.core.filesystem.JarMount;
@@ -62,6 +63,8 @@ import net.minecraft.util.NonNullList;
 import net.minecraft.util.SoundEvent;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.world.World;
+import net.minecraftforge.common.ForgeChunkManager;
+import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.common.config.ConfigCategory;
 import net.minecraftforge.common.config.Configuration;
 import net.minecraftforge.common.config.Property;
@@ -245,6 +248,9 @@ public class ComputerCraft
     private static List<ITurtlePermissionProvider> permissionProviders = new ArrayList<>();
     private static final Map<String, IPocketUpgrade> pocketUpgrades = new HashMap<>();
 
+    // Callbacks
+    private static ForcedChunkLoadingCallback chunkLoadingCallback = new ForcedChunkLoadingCallback();
+
     // Implementation
     @Mod.Instance( value = ComputerCraft.MOD_ID )
     public static ComputerCraft instance;
@@ -395,6 +401,8 @@ public class ComputerCraft
     {
         proxy.init();
         turtleProxy.init();
+        MinecraftForge.EVENT_BUS.register(this);
+        ForgeChunkManager.setForcedChunkLoadingCallback(this, chunkLoadingCallback);
     }
 
     @Mod.EventHandler

@@ -521,6 +521,7 @@ public class TurtleBrain implements ITurtleAccess
                         newTurtle.transferStateFrom( oldOwner );
                         newTurtle.createServerComputer().setWorld( world );
                         newTurtle.createServerComputer().setPosition( pos );
+                        newTurtle.createServerComputer().requireChunk();
 
                         // Remove the old turtle
                         oldWorld.setBlockToAir( oldPos );

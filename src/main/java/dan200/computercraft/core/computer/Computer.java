@@ -7,6 +7,8 @@
 package dan200.computercraft.core.computer;
 
 import com.google.common.base.Objects;
+import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.Sets;
 import dan200.computercraft.ComputerCraft;
 import dan200.computercraft.api.filesystem.IMount;
 import dan200.computercraft.api.filesystem.IWritableMount;
@@ -17,18 +19,26 @@ import dan200.computercraft.core.filesystem.FileSystemException;
 import dan200.computercraft.core.lua.ILuaMachine;
 import dan200.computercraft.core.lua.LuaJLuaMachine;
 import dan200.computercraft.core.terminal.Terminal;
+import dan200.computercraft.shared.computer.core.ServerComputer;
+import net.minecraft.nbt.NBTTagCompound;
+import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.math.ChunkPos;
+import net.minecraft.world.World;
+import net.minecraftforge.common.DimensionManager;
+import net.minecraftforge.common.ForgeChunkManager;
+import net.minecraftforge.common.util.Constants;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.util.ArrayList;
-import java.util.List;
+import java.util.*;
+import java.util.stream.Stream;
 
 public class Computer
 {    
     public static final String[] s_sideNames = new String[] {
         "bottom", "top", "back", "front", "right", "left",
     };
-    
+
     private enum State
     {
         Off,
@@ -173,6 +183,59 @@ public class Computer
             }
         }
     }
+
+    private static Map<Integer, ForgeChunkManager.Ticket> computerToTickets = new HashMap<>();
+
+    public static class ForcedChunkLoadingCallback implements ForgeChunkManager.LoadingCallback {
+        @Override
+        public void ticketsLoaded(List<ForgeChunkManager.Ticket> tickets, World world) {
+            List<ForgeChunkManager.Ticket> releaseTickets = new ArrayList();
+            tickets.forEach(ticket -> {
+                NBTTagCompound modData = ticket.getModData();
+                Set<ChunkPos> chunks = ticket.getChunkList();
+                if (chunks.isEmpty()) { releaseTickets.add(ticket); return; }
+                if (!modData.hasKey("id", Constants.NBT.TAG_INT)) { releaseTickets.add(ticket); return; }
+                computerToTickets.put(modData.getInteger("id"), ticket);
+                for (ChunkPos p: chunks) ForgeChunkManager.forceChunk(ticket, p);
+            });
+            releaseTickets.forEach(ForgeChunkManager::releaseTicket);
+        }
+    }
+
+    private boolean shouldLoadChunk() {
+        if (m_id < 0) return false;
+        if (m_label == null || m_label.length() == 0) return false;
+        return true;
+    }
+
+    public boolean requireChunk(World world, BlockPos pos) {
+        if (!shouldLoadChunk()) return false;
+        ForgeChunkManager.Ticket ticket;
+        if (computerToTickets.containsKey(m_id)) {
+            ticket = computerToTickets.get(m_id);
+        } else {
+            ticket = ForgeChunkManager.requestTicket(
+                    ComputerCraft.instance,
+                    world,
+                    ForgeChunkManager.Type.NORMAL
+            );
+            if (ticket == null) return false;
+            ticket.getModData().setInteger("id", m_id);
+            computerToTickets.put(m_id, ticket);
+        }
+        Set<ChunkPos> forceChunks = ImmutableSet.copyOf(Stream.of(
+                pos,
+                pos.north(16),
+                pos.east(16),
+                pos.south(16),
+                pos.west(16)
+        ).map(ChunkPos::new).iterator());
+        Set<ChunkPos> unforceChunks = Sets.difference(ticket.getChunkList(), forceChunks);
+        Set<ChunkPos> newForceChunks = Sets.difference(forceChunks, ticket.getChunkList());
+        unforceChunks.forEach(c -> ForgeChunkManager.unforceChunk(ticket, c));
+        newForceChunks.forEach(c -> ForgeChunkManager.forceChunk(ticket, c));
+        return true;
+    }
     
     private static IMount s_romMount = null;
 
@@ -264,6 +327,7 @@ public class Computer
     
     public void shutdown()
     {
+        removeChunkLoader();
         stopComputer( false );
     }
     
@@ -300,6 +364,9 @@ public class Computer
     
     public void unload()
     {
+        if (DimensionManager.getWorld(0) != null) {
+            removeChunkLoader();
+        }
         synchronized( this )
         {
             stopComputer( false );
@@ -322,7 +389,11 @@ public class Computer
 
     public void setID( int id )
     {
+        int old_id = m_id;
         m_id = id;
+        if (old_id < 0 && id >= 0) {
+            ComputerCraft.serverComputerRegistry.get(m_id).requireChunk();
+        }
     }
 
     public String getLabel()
@@ -332,10 +403,15 @@ public class Computer
 
     public void setLabel( String label )
     {
+        String old_label = m_label;
         if( !Objects.equal( label, m_label ) )
         {
             m_label = label;
             m_externalOutputChanged = true;
+            if (old_label == null && isOn()) {
+                ServerComputer computer = ComputerCraft.serverComputerRegistry.get(m_id);
+                if (computer != null) computer.requireChunk(); // TODO nullになる条件を調べる
+            }
         }
     }
 
@@ -785,6 +861,10 @@ public class Computer
                     {
                         return;
                     }
+
+                    if (!reboot) {
+                        removeChunkLoader();
+                    }
                                 
                     // Shutdown our APIs
                     synchronized( m_apis )
@@ -883,5 +963,12 @@ public class Computer
         };
         
         ComputerThread.queueTask( task, computer );
+    }
+
+    void removeChunkLoader() {
+        if (computerToTickets.containsKey(m_id)) {
+            ForgeChunkManager.releaseTicket(computerToTickets.get(m_id));
+            computerToTickets.remove(m_id);
+        }
     }
 }

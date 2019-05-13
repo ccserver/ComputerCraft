@@ -215,6 +215,7 @@ public class ServerComputer extends ServerTerminal
     {
         // Turn on
         m_computer.turnOn();
+        requireChunk();
     }
 
     @Override
@@ -419,5 +420,9 @@ public class ServerComputer extends ServerTerminal
                 break;
             }
         }
+    }
+
+    public boolean requireChunk() {
+        return m_computer.requireChunk(m_world, m_position);
     }
 }
